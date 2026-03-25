@@ -20,14 +20,27 @@ const songsCol = collection(db, "songs");
 // ESTADO GLOBAL DA APLICAÇÃO
 window.songs = []; 
 window.currentSongId = null;
-window.scrollInterval = null;
 window.transposeSteps = 0;
 window.originalContent = "";
 window.currentFontSize = 16;
 
+// Variáveis para a nova Rolagem Inteligente
+window.scrollAnimationFrame = null;
+window.lastScrollTimestamp = null;
+window.scrollAccumulator = 0;
+window.isUserTouching = false; // Deteta se o utilizador está a mexer livremente
+
 const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const enharmonics = { 'Cb': 'B', 'Db': 'C#', 'Eb': 'D#', 'Fb': 'E', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#', 'E#': 'F', 'B#': 'C' };
-const chordRegex = /\b([CDEFGAB](?:#|b)?(?:maj7|maj9|maj|m7|m9|m11|m13|m|dim7|dim|aug|sus2|sus4|sus|add9|add|\d+)*(?:\/[CDEFGAB](?:#|b)?)?)\b/g;
+
+// Expressão regular corrigida para pintar TODAS as notas de azul (incluindo baixos e sustenidos)
+const chordRegex = /(?<=^|\s)([CDEFGAB](?:#|b)?(?:maj7|maj9|maj|m7|m9|m11|m13|m|dim7|dim|aug|sus2|sus4|sus|add9|add|\d+)*(?:\/[CDEFGAB](?:#|b)?)?)(?=\s|$)/g;
+
+// Ouvintes de evento para permitir rolagem manual livre sem o código forçar para baixo
+window.addEventListener('touchstart', () => window.isUserTouching = true, {passive: true});
+window.addEventListener('touchend', () => window.isUserTouching = false, {passive: true});
+window.addEventListener('mousedown', () => window.isUserTouching = true);
+window.addEventListener('mouseup', () => window.isUserTouching = false);
 
 // --- INTEGRAÇÃO COM FIREBASE ---
 window.loadSongsFromFirebase = async function() {
@@ -271,34 +284,60 @@ window.renderLine = function(line) {
 window.changeFontSize = function(direction) {
     window.currentFontSize += direction;
     if (window.currentFontSize < 12) window.currentFontSize = 12;
-    if (window.currentFontSize > 32) window.currentFontSize = 32;
+    if (window.currentFontSize > 40) window.currentFontSize = 40;
     document.getElementById('chords-display').style.fontSize = window.currentFontSize + 'px';
 };
 
+// --- NOVA ROLAGEM INTELIGENTE ---
 window.toggleScroll = function() {
     const btn = document.getElementById('btn-scroll');
-    if (window.scrollInterval) {
+    if (window.scrollAnimationFrame) {
         window.stopScroll();
         return;
     }
     btn.innerText = '⏸ Pausar';
     btn.classList.add('btn-primary');
-    window.startScroll();
+    
+    window.lastScrollTimestamp = performance.now();
+    window.scrollAccumulator = 0;
+    window.scrollAnimationFrame = requestAnimationFrame(window.scrollLoop);
 };
 
-window.startScroll = function() {
-    const speedVal = Number(document.getElementById('scroll-speed').value);
-    const intervalTime = Math.max(10, 110 - speedVal * 9);
-    window.scrollInterval = setInterval(() => {
-        window.scrollBy(0, 1);
-        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 2) window.stopScroll();
-    }, intervalTime);
+window.scrollLoop = function(timestamp) {
+    if (!timestamp) timestamp = performance.now();
+    const deltaTime = timestamp - window.lastScrollTimestamp;
+    window.lastScrollTimestamp = timestamp;
+
+    // Se o utilizador não estiver com o dedo/rato no ecrã, calculamos o scroll
+    if (!window.isUserTouching) {
+        const speedVal = Number(document.getElementById('scroll-speed').value);
+        // Calcula a velocidade (pixels por segundo) baseada no slider
+        const pixelsPerSecond = speedVal * 8; 
+        const pixelsToScroll = (pixelsPerSecond * deltaTime) / 1000;
+
+        window.scrollAccumulator += pixelsToScroll;
+
+        if (window.scrollAccumulator >= 1) {
+            const scrollPixels = Math.floor(window.scrollAccumulator);
+            window.scrollBy(0, scrollPixels);
+            window.scrollAccumulator -= scrollPixels;
+        }
+    }
+
+    // Para a rolagem se chegar ao final da página
+    if (window.innerHeight + Math.round(window.scrollY) >= document.body.offsetHeight - 2) {
+        window.stopScroll();
+        return;
+    }
+
+    // Continua o loop
+    window.scrollAnimationFrame = requestAnimationFrame(window.scrollLoop);
 };
 
 window.stopScroll = function() {
-    if (window.scrollInterval) {
-        clearInterval(window.scrollInterval);
-        window.scrollInterval = null;
+    if (window.scrollAnimationFrame) {
+        cancelAnimationFrame(window.scrollAnimationFrame);
+        window.scrollAnimationFrame = null;
     }
     const btn = document.getElementById('btn-scroll');
     if (btn) {
@@ -314,9 +353,6 @@ window.escapeHtml = function(text) {
 // Event Listeners base da tela
 document.getElementById('search-input').addEventListener('input', window.renderSongs);
 document.getElementById('sort-select').addEventListener('change', window.renderSongs);
-document.getElementById('scroll-speed').addEventListener('input', () => {
-    if (window.scrollInterval) { window.stopScroll(); window.toggleScroll(); }
-});
 
 // Dá o pontapé inicial puxando os dados do Firebase e renderizando a tela inicial
 window.loadSongsFromFirebase();
