@@ -29,6 +29,7 @@ window.scrollAnimationFrame = null;
 window.lastScrollTimestamp = null;
 window.scrollAccumulator = 0;
 window.isUserTouching = false; // Deteta se o utilizador está a mexer livremente
+window.wakeLock = null; // Controle para manter a tela ligada
 
 const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const enharmonics = { 'Cb': 'B', 'Db': 'C#', 'Eb': 'D#', 'Fb': 'E', 'Gb': 'F#', 'Ab': 'G#', 'Bb': 'A#', 'E#': 'F', 'B#': 'C' };
@@ -41,6 +42,36 @@ window.addEventListener('touchstart', () => window.isUserTouching = true, {passi
 window.addEventListener('touchend', () => window.isUserTouching = false, {passive: true});
 window.addEventListener('mousedown', () => window.isUserTouching = true);
 window.addEventListener('mouseup', () => window.isUserTouching = false);
+
+// --- CONTROLE DE TELA (WAKE LOCK) ---
+window.requestWakeLock = async function() {
+    try {
+        if ('wakeLock' in navigator) {
+            window.wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Wake Lock ativado: A tela não vai apagar.');
+        }
+    } catch (err) {
+        console.error(`Erro ao ativar Wake Lock: ${err.name}, ${err.message}`);
+    }
+};
+
+window.releaseWakeLock = function() {
+    if (window.wakeLock !== null) {
+        window.wakeLock.release().then(() => {
+            window.wakeLock = null;
+            console.log('Wake Lock liberado: A tela já pode apagar normalmente.');
+        });
+    }
+};
+
+// Se o usuário minimizar o navegador ou trocar de aba, o sistema solta o Wake Lock automaticamente.
+// Este evento garante que, ao voltar para a aba da cifra, se a rolagem estiver ativa, a tela volte a ficar bloqueada ligada.
+document.addEventListener('visibilitychange', async () => {
+    if (window.scrollAnimationFrame && document.visibilityState === 'visible') {
+        await window.requestWakeLock();
+    }
+});
+
 
 // --- INTEGRAÇÃO COM FIREBASE ---
 window.loadSongsFromFirebase = async function() {
@@ -298,6 +329,9 @@ window.toggleScroll = function() {
     btn.innerText = '⏸ Pausar';
     btn.classList.add('btn-primary');
     
+    // --- ATIVA O WAKE LOCK AO INICIAR A ROLAGEM ---
+    window.requestWakeLock();
+    
     window.lastScrollTimestamp = performance.now();
     window.scrollAccumulator = 0;
     window.scrollAnimationFrame = requestAnimationFrame(window.scrollLoop);
@@ -344,6 +378,9 @@ window.stopScroll = function() {
         btn.innerText = '▶ Rolagem';
         btn.classList.remove('btn-primary');
     }
+    
+    // --- LIBERA O WAKE LOCK AO PARAR A ROLAGEM ---
+    window.releaseWakeLock();
 };
 
 window.escapeHtml = function(text) {
